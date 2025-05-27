@@ -2,21 +2,15 @@ package com.java.example;
 
 import java.io.File;
 import java.io.FileReader;
-import java.security.KeyFactory;
-import java.security.MessageDigest;
-import java.security.PrivateKey;
-import java.security.PublicKey;
-import java.security.Security;
-import java.security.Signature;
+import java.nio.charset.StandardCharsets;
+import java.security.*;
+import java.security.interfaces.RSAPrivateKey;
+import java.security.interfaces.RSAPublicKey;
+import java.security.spec.MGF1ParameterSpec;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.PSSParameterSpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
-
-import javax.crypto.Cipher;
-
-import org.bouncycastle.asn1.ASN1InputStream;
-import org.bouncycastle.asn1.ASN1OctetString;
-import org.bouncycastle.asn1.ASN1Sequence;
 import org.bouncycastle.util.io.pem.PemObject;
 import org.bouncycastle.util.io.pem.PemReader;
 
@@ -82,45 +76,39 @@ public class pkcs {
 		return null;
 	}
 
-	public static boolean Verify(PublicKey publicKey, String signature, String msg) {
-		try {
-			byte[] sigBytes = Base64.getDecoder().decode(signature.getBytes());
+	public static boolean Verify(PublicKey publicKey, String signatureStr, String msg) throws NoSuchAlgorithmException, NoSuchProviderException, InvalidAlgorithmParameterException, InvalidKeyException, SignatureException {
+		byte[] sigBytes = Base64.getDecoder().decode(signatureStr);
 
-			Cipher cipher = Cipher.getInstance("RSA/None/PKCS1Padding", "BC");
-			cipher.init(Cipher.DECRYPT_MODE, publicKey);
+		Signature signature = Signature.getInstance("RSASSA-PSS", "BC");
+		RSAPublicKey rsaPublicKey = (RSAPublicKey) publicKey;
 
-			byte[] decSig = cipher.doFinal(sigBytes);
-			ASN1InputStream aIn = new ASN1InputStream(decSig);
-			ASN1Sequence seq = (ASN1Sequence) aIn.readObject();
+		int saltLen = rsaPublicKey.getModulus().bitLength() / 8 - 32 - 2;
 
-			MessageDigest hash = MessageDigest.getInstance("SHA-256", "BC");
-			hash.update(msg.getBytes());
+		PSSParameterSpec spec = new PSSParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA256, saltLen, 1);
 
-			ASN1OctetString sigHash = (ASN1OctetString) seq.getObjectAt(1);
-			return MessageDigest.isEqual(hash.digest(), sigHash.getOctets());
-		} catch (Exception ex) {
+		signature.setParameter(spec);
+		signature.initVerify(publicKey);
+		signature.update(msg.getBytes(StandardCharsets.UTF_8));
 
-		}
-
-		return false;
+		return signature.verify(sigBytes);
 	}
 
-	public static String Sign(PrivateKey privateKey, String msg) {
-		try {
-			Signature signature = Signature.getInstance("SHA256withRSA", "BC");
-			signature.initSign(privateKey);
+	public static String Sign(PrivateKey privateKey, String msg) throws NoSuchAlgorithmException, NoSuchProviderException, InvalidAlgorithmParameterException, SignatureException, InvalidKeyException {
+		Signature signature = Signature.getInstance("RSASSA-PSS", "BC");
 
-			byte[] message = msg.getBytes();
-			signature.update(message);
+		java.security.interfaces.RSAPrivateKey rsaPrivateKey = (RSAPrivateKey) privateKey;
 
-			byte[] sigBytes = signature.sign();
+		// Calculate dynamic salt length: modulus byte length - digest length - 2
+		int saltLen = rsaPrivateKey.getModulus().bitLength() / 8 - 32 - 2;
 
-			byte[] sig64 = Base64.getEncoder().encode(sigBytes);
-			return new String(sig64);
-		} catch (Exception ex) {
-			System.out.println(ex.toString());
-		}
-		return "";
+		PSSParameterSpec pssSpec = new PSSParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA256, saltLen, 1);
+
+		signature.setParameter(pssSpec);
+		signature.initSign(rsaPrivateKey);
+		signature.update(msg.getBytes(StandardCharsets.UTF_8));
+
+		byte[] sigBytes = signature.sign();
+        return Base64.getEncoder().encodeToString(sigBytes);
 	}
 }
 
